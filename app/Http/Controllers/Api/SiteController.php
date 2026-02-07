@@ -15,9 +15,9 @@ class SiteController extends Controller
     // GET: api/sites
     public function index(Request $request)
     {
-        // Fitur pencarian sederhana (Opsional)
         $query = Site::query();
 
+        // Fitur pencarian server-side (tetap dipertahankan)
         if ($request->has('search')) {
             $search = $request->search;
             $query->where('site_id', 'like', "%{$search}%")
@@ -25,10 +25,17 @@ class SiteController extends Controller
                   ->orWhere('olt', 'like', "%{$search}%");
         }
 
-        // Return data dengan pagination agar ringan jika data ribuan
+        // --- PERBAIKAN DI SINI ---
+        // Ambil nilai 'per_page' dari URL, jika tidak ada default ke 10
+        $perPage = $request->input('per_page', 10);
+
+        // Validasi agar server tidak crash jika user minta terlalu banyak (Opsional)
+        // misal: maksimal 5000 agar memori aman
+        // if ($perPage > 5000) $perPage = 5000; 
+
         return response()->json([
             'status' => true,
-            'data' => $query->paginate(10)
+            'data' => $query->paginate($perPage)
         ]);
     }
 

@@ -35,36 +35,39 @@ class AuthController extends Controller
 
     // 2. LOGIN (Inti fitur)
     public function login(Request $request)
-    {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
+{
+    // 1. Validasi NIK
+    $request->validate([
+        'nik' => 'required',
+        'password' => 'required'
+    ]);
 
-        $user = User::where('email', $request->email)->first();
-
-        // Cek apakah user ada & password benar
-        if (! $user || ! Hash::check($request->password, $user->password)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Email atau Password salah.'
-            ], 401);
-        }
-
-        // Hapus token lama (opsional, agar 1 device 1 token)
-        // $user->tokens()->delete();
-
-        // Buat Token Baru
-        $token = $user->createToken('auth_token')->plainTextToken;
-
+    // 2. Cek Credential (NIK & Password)
+    // Auth::attempt otomatis mencari kolom 'nik' jika kita spesifikasikan
+	$credentials = ['nik' => $request->nik, 'password' => $request->password];
+    if (!Auth::attempt($credentials)) {
         return response()->json([
-            'status' => true,
-            'message' => 'Login Berhasil',
-            'access_token' => $token,
-            'token_type' => 'Bearer',
-            'user' => $user
-        ]);
+            'message' => 'Login Gagal. Cek NIK dan Password.'
+        ], 401);
     }
+
+    // 3. Jika Sukses, Buat Token
+    $user = Auth::user();
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Login Berhasil',
+        'access_token' => $token,
+        'token_type' => 'Bearer',
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'nik' => $user->nik,
+            'role' => $user->role, // <--- Penting: Kirim role ke Frontend
+        ]
+    ]);
+}
 
     // 3. LOGOUT
     public function logout(Request $request)

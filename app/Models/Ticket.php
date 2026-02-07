@@ -12,6 +12,12 @@ class Ticket extends Model
     protected $fillable = [
     'nomor_internal', // Baru
     'nomor_sistem',   // Baru
-    'unit', 'jenis', 'site_name', 'deskripsi', 'petugas', 'status'
+	'site_id',
+    'unit', 
+	'jenis', 
+	'site_name', 
+	'deskripsi', 
+	'petugas', 
+	'status'
 ];
 }

@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\SiteController;
 use App\Http\Controllers\Api\SpbuController;
 use App\Http\Controllers\Api\AbsensiController;
 use App\Http\Controllers\Api\TicketController;
+use App\Http\Controllers\Api\UserController;
 
 // === ROUTE PUBLIC (Bisa diakses siapa saja) ===
 Route::post('/register', [AuthController::class, 'register']); // Buat user baru
@@ -19,9 +20,16 @@ Route::post('/sites/import', [SiteController::class, 'import']);
 
 // === ROUTE PRIVATE (Wajib Login / Punya Token) ===
 Route::middleware('auth:sanctum')->group(function () {
+	
+	Route::get('/tickets/next-number', [TicketController::class, 'getNextNumber']);
+	Route::apiResource('/tickets', TicketController::class);
     
     // Fitur Logout
-    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/logout', function (Request $request) {
+        // Hapus token yang sedang dipakai
+        $request->user()->currentAccessToken()->delete();
+        return response()->json(['message' => 'Logged out successfully']);
+    });
     
     // Fitur User Profile (Cek siapa yang login)
     Route::get('/user', function (Request $request) {
@@ -32,6 +40,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/absensi', [AbsensiController::class, 'getReport']);
     // Route SPBU
     Route::get('/spbu', [SpbuController::class, 'index']);
+	Route::get('/users/teknisi', [UserController::class, 'getTeknisi']);
     
 
     // --- DATA SITES DIKUNCI DI SINI ---

@@ -21,9 +21,14 @@ class SpbuController extends Controller
                   ->orWhere('alamat', 'like', "%{$search}%");
         }
 
+        // --- PERUBAHAN DI SINI ---
+        // Ambil jumlah per_page dari request. Default tetap 10 jika tidak diminta.
+        $perPage = $request->input('per_page', 10);
+
         return response()->json([
             'status' => true,
-            'data' => $query->paginate(10)
+            // Masukkan variabel $perPage ke dalam paginate
+            'data' => $query->paginate($perPage)
         ]);
     }
 
