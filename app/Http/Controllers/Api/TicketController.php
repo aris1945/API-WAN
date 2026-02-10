@@ -95,16 +95,55 @@ class TicketController extends Controller
     // --- FUNGSI SHOW (DETAIL TIKET) - PENTING UNTUK HALAMAN EDIT ---
     public function show($id)
     {
-        $ticket = Ticket::find($id);
+        // Load tiket beserta relasi logs dan user pembuat log
+        $ticket = Ticket::with(['logs.user'])->find($id);
 
         if (!$ticket) {
-            return response()->json(['status' => false, 'message' => 'Tiket tidak ditemukan'], 404);
+            return response()->json(['status' => false, 'message' => 'Not Found'], 404);
         }
 
         return response()->json([
             'status' => true,
             'data' => $ticket
         ]);
+    }
+	
+	public function addLog(Request $request, $id)
+    {
+        $ticket = Ticket::find($id);
+        if (!$ticket) return response()->json(['message' => 'Not Found'], 404);
+
+        $request->validate([
+            'status' => 'required',
+            'deskripsi' => 'required',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg|max:5120',
+        ]);
+
+        $imagePath = null;
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            $filename = time() . '_' . $image->getClientOriginalName();
+            
+            // --- PERBAIKAN UTAMA ADA DISINI ---
+            
+            // Parameter ke-3 adalah 'public'. Ini WAJIB agar masuk ke storage/app/public
+            $image->storeAs('evident', $filename, 'public'); 
+            
+            // Simpan path untuk Database (tanpa /public di depan)
+            // Karena symlink memetakan 'storage' -> 'storage/app/public'
+            $imagePath = 'storage/evident/' . $filename; 
+        }
+
+        $ticket->logs()->create([
+            'user_id' => $request->user()->id,
+            'status' => $request->status,
+            'deskripsi' => $request->deskripsi,
+            'image_path' => $imagePath
+        ]);
+
+        $ticket->update(['status' => $request->status]);
+
+        return response()->json(['status' => true, 'message' => 'Worklog berhasil ditambahkan']);
     }
 
     // --- FUNGSI UPDATE (EDIT DATA) - INI YANG SEBELUMNYA HILANG ---

@@ -21,6 +21,8 @@ Route::post('/sites/import', [SiteController::class, 'import']);
 // === ROUTE PRIVATE (Wajib Login / Punya Token) ===
 Route::middleware('auth:sanctum')->group(function () {
 	
+	Route::post('/tickets/{id}/log', [TicketController::class, 'addLog']); // Endpoint khusus log
+	
 	Route::get('/tickets/next-number', [TicketController::class, 'getNextNumber']);
 	Route::apiResource('/tickets', TicketController::class);
     

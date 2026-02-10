@@ -20,4 +20,9 @@ class Ticket extends Model
 	'petugas', 
 	'status'
 ];
+	public function logs()
+{
+    // Urutkan dari yang terbaru (agar di UI muncul paling atas)
+    return $this->hasMany(TicketLog::class)->orderBy('created_at', 'desc');
+}
 }
