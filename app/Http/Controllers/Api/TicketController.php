@@ -139,6 +139,10 @@ class TicketController extends Controller
             'status' => 'required',
             'deskripsi' => 'required',
             'image' => 'nullable|image|mimes:jpeg,png,jpg|max:5120',
+            // Validasi field baru (nullable/boleh kosong)
+            'odp' => 'nullable|string',
+            'odc' => 'nullable|string',
+            'ftm' => 'nullable|string',
         ]);
 
         // 1. Upload Gambar
@@ -150,31 +154,36 @@ class TicketController extends Controller
             $imagePath = 'storage/evident/' . $filename; 
         }
 
-        // 2. Simpan Log
+        // 2. Simpan Log (Riwayat)
         $ticket->logs()->create([
             'user_id' => $request->user()->id,
             'status' => $request->status,
-            'deskripsi' => $request->deskripsi,
+            // Kita gabungkan info segmentasi ke deskripsi log agar terbaca di riwayat
+            'deskripsi' => $request->deskripsi . 
+                           ($request->odp ? " [ODP: $request->odp]" : "") .
+                           ($request->odc ? " [ODC: $request->odc]" : ""),
             'image_path' => $imagePath
         ]);
 
-        // 3. Update Status di Database Lokal
-        $ticket->update(['status' => $request->status]);
-
-        // --- 4. KIRIM KE GOOGLE SHEET (PERBAIKAN DISINI) ---
+        // 3. Update Status & Segmentasi di Tabel Utama Tiket
+        $updateData = ['status' => $request->status];
         
-        // PENTING: Refresh dulu agar $ticket memuat status TERBARU dari database
-        $ticket->refresh(); 
+        // Hanya update jika user mengisi data (agar data lama tidak tertimpa kosong)
+        if ($request->filled('odp')) $updateData['odp'] = $request->odp;
+        if ($request->filled('odc')) $updateData['odc'] = $request->odc;
+        if ($request->filled('ftm')) $updateData['ftm'] = $request->ftm;
 
+        $ticket->update($updateData);
+
+        // 4. Kirim ke Google Sheet
+        $ticket->refresh(); 
         try {
-            // Panggil service dengan action 'update'
             \App\Services\GoogleSheetService::send($ticket, 'update');
         } catch (\Exception $e) {
-             \Log::error("Gagal update Sheet Log: " . $e->getMessage());
+             \Log::error("Gagal update Sheet: " . $e->getMessage());
         }
-        // ---------------------------------------------------
 
-        return response()->json(['status' => true, 'message' => 'Worklog berhasil ditambahkan']);
+        return response()->json(['status' => true, 'message' => 'Worklog & Segmentasi berhasil diupdate']);
     }
 
     // --- FUNGSI UPDATE (EDIT DATA) - INI YANG SEBELUMNYA HILANG ---

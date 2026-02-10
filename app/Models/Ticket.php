@@ -18,7 +18,10 @@ class Ticket extends Model
 	'site_name', 
 	'deskripsi', 
 	'petugas', 
-	'status'
+	'status',
+    'odp',
+    'odc',
+    'ftm',
 ];
 	public function logs()
 {

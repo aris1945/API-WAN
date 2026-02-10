@@ -10,7 +10,7 @@ class GoogleSheetService
     public static function send($ticket, $action = 'create')
     {
         $url = env('GOOGLE_SCRIPT_URL');
-        
+
         if (!$url) return;
 
         try {
@@ -27,12 +27,14 @@ class GoogleSheetService
                     'deskripsi' => $ticket->deskripsi,
                     'status' => $ticket->status,
                     'petugas' => $ticket->petugas,
+                    'odp' => $ticket->odp,
+                    'odc' => $ticket->odc,
+                    'ftm' => $ticket->ftm,
                 ]
             ];
 
             // Kirim POST Request
             Http::post($url, $payload);
-            
         } catch (\Exception $e) {
             Log::error("Gagal kirim ke Google Sheet: " . $e->getMessage());
         }
