@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Ticket;
 use Illuminate\Http\Request;
+use App\Services\TelegramService;
+use App\Models\User;
 
 class TicketController extends Controller
 {
@@ -65,31 +67,51 @@ class TicketController extends Controller
     // --- FUNGSI STORE (SIMPAN DATA BARU) ---
     public function store(Request $request)
     {
+        // 1. Validasi Input
         $request->validate([
             'unit' => 'required',
-            'jenis' => 'required',
             'deskripsi' => 'required',
+            // Tambahkan validasi lain jika perlu
         ]);
 
-        $ticketNumber = $this->generateTicketNumber();
+        // 2. GENERATE NOMOR INTERNAL (BAGIAN YANG HILANG TADI)
+        // Logika: Cari tiket terakhir, ambil ID-nya, tambah 1.
+        // Format Contoh: TKT-0001, TKT-0002
+        $lastTicket = Ticket::orderBy('id', 'desc')->first();
+        $nextId = $lastTicket ? $lastTicket->id + 1 : 1;
+        $nomor_internal = 'INV-' . sprintf('%04d', $nextId); 
+        // ----------------------------------------------------
 
+        // 3. Simpan ke Database
         $ticket = Ticket::create([
-            'nomor_internal' => $ticketNumber,
+            'nomor_internal' => $nomor_internal, // Variabel ini sekarang sudah ada isinya
             'nomor_sistem' => $request->nomor_sistem,
             'unit' => $request->unit,
             'jenis' => $request->jenis,
             'site_name' => $request->site_name,
-            'site_id'   => $request->site_id, // Pastikan ID tersimpan
+            'site_id' => $request->site_id,
             'deskripsi' => $request->deskripsi,
-            'petugas' => $request->petugas,
-            'status' => 'Open', // Default status
+            'petugas' => $request->petugas, 
+            'status' => 'Open',
         ]);
+        dispatch(function() use ($ticket) {
+             \App\Services\GoogleSheetService::send($ticket, 'create');
+        })->afterResponse();
+
+        // 4. Kirim Notifikasi Telegram (Dengan Pengaman Try-Catch)
+        try {
+            // Pastikan fungsi notifyTechnicians ada di paling bawah class Controller ini
+            $this->notifyTechnicians($ticket);
+        } catch (\Exception $e) {
+            // Jika Telegram error, catat di log saja, jangan bikin error 500 di browser
+            Log::error("Gagal mengirim notifikasi Telegram: " . $e->getMessage());
+        }
 
         return response()->json([
-            'status' => true,
-            'message' => 'Tiket berhasil dibuat',
+            'status' => true, 
+            'message' => 'Tiket berhasil dibuat', 
             'data' => $ticket
-        ]);
+        ], 201);
     }
 
     // --- FUNGSI SHOW (DETAIL TIKET) - PENTING UNTUK HALAMAN EDIT ---
@@ -119,21 +141,16 @@ class TicketController extends Controller
             'image' => 'nullable|image|mimes:jpeg,png,jpg|max:5120',
         ]);
 
+        // 1. Upload Gambar
         $imagePath = null;
         if ($request->hasFile('image')) {
             $image = $request->file('image');
             $filename = time() . '_' . $image->getClientOriginalName();
-            
-            // --- PERBAIKAN UTAMA ADA DISINI ---
-            
-            // Parameter ke-3 adalah 'public'. Ini WAJIB agar masuk ke storage/app/public
             $image->storeAs('evident', $filename, 'public'); 
-            
-            // Simpan path untuk Database (tanpa /public di depan)
-            // Karena symlink memetakan 'storage' -> 'storage/app/public'
             $imagePath = 'storage/evident/' . $filename; 
         }
 
+        // 2. Simpan Log
         $ticket->logs()->create([
             'user_id' => $request->user()->id,
             'status' => $request->status,
@@ -141,7 +158,21 @@ class TicketController extends Controller
             'image_path' => $imagePath
         ]);
 
+        // 3. Update Status di Database Lokal
         $ticket->update(['status' => $request->status]);
+
+        // --- 4. KIRIM KE GOOGLE SHEET (PERBAIKAN DISINI) ---
+        
+        // PENTING: Refresh dulu agar $ticket memuat status TERBARU dari database
+        $ticket->refresh(); 
+
+        try {
+            // Panggil service dengan action 'update'
+            \App\Services\GoogleSheetService::send($ticket, 'update');
+        } catch (\Exception $e) {
+             \Log::error("Gagal update Sheet Log: " . $e->getMessage());
+        }
+        // ---------------------------------------------------
 
         return response()->json(['status' => true, 'message' => 'Worklog berhasil ditambahkan']);
     }
@@ -189,6 +220,8 @@ class TicketController extends Controller
             'status'       => $request->status ?? $ticket->status,
         ]);
 
+        \App\Services\GoogleSheetService::send($ticket, 'update');
+
         if ($updated) {
             return response()->json(['status' => true, 'message' => 'Tiket berhasil diperbarui', 'data' => $ticket]);
         } else {
@@ -216,5 +249,35 @@ class TicketController extends Controller
         
         $ticket->delete();
         return response()->json(['status' => true, 'message' => 'Tiket dihapus']);
+    }
+	
+	private function notifyTechnicians($ticket)
+    {
+        // 1. Ambil string petugas, misal: "Budi (1001), Andi (1002)"
+        $petugasString = $ticket->petugas;
+        
+        // 2. Ekstrak NIK menggunakan Regex
+        // Mencari angka di dalam kurung (...)
+        preg_match_all('/\((.*?)\)/', $petugasString, $matches);
+        $niks = $matches[1]; // Array berisi ['1001', '1002']
+
+        if (empty($niks)) return;
+
+        // 3. Cari User berdasarkan NIK yang punya telegram_chat_id
+        $users = User::whereIn('nik', $niks)
+                     ->whereNotNull('telegram_chat_id')
+                     ->get();
+
+        // 4. Kirim Pesan ke masing-masing teknisi
+        foreach ($users as $user) {
+            $message = "🚨 <b>TIKET BARU DITUGASKAN!</b>\n\n" .
+                       "🆔 <b>No:</b> {$ticket->nomor_internal}\n" .
+                       "📍 <b>Site:</b> {$ticket->site_id} - {$ticket->site_name}\n" .
+                       "⚠ <b>Deskripsi:</b> {$ticket->deskripsi}\n" .
+                       "🛠 <b>Unit:</b> {$ticket->unit}\n\n" .
+                       "Segera cek aplikasi untuk detailnya.";
+
+            TelegramService::sendMessage($user->telegram_chat_id, $message);
+        }
     }
 }
