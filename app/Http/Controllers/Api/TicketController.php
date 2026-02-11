@@ -7,6 +7,7 @@ use App\Models\Ticket;
 use Illuminate\Http\Request;
 use App\Services\TelegramService;
 use App\Models\User;
+use Illuminate\Support\Facades\Log;
 
 class TicketController extends Controller
 {
@@ -42,33 +43,27 @@ class TicketController extends Controller
         $user = $request->user();
         $query = Ticket::query();
 
-        // --- LOGIKA FILTER BERDASARKAN ROLE ---
-
-        // 1. ADMIN / HELPDESK: Melihat SEMUA tiket (Tanpa Filter)
+        // 1. ADMIN / HELPDESK: Melihat SEMUA tiket
         if (in_array($user->role, ['admin', 'helpdesk'])) {
-            // Tidak ada filter, liat semua
+            // No filter
         } 
-        
         // 2. HSA / KORLAP: Hanya melihat tiket di SA mereka
         elseif (in_array($user->role, ['hsa', 'korlap'])) {
-            // Pastikan user punya sa_code, kalau tidak punya, jangan tampilkan apa-apa (safety)
             if ($user->sa_code) {
                 $query->where('sa', $user->sa_code);
             } else {
-                // Opsional: return kosong jika HSA tidak punya area
                 $query->where('id', 0); 
             }
         }
-
-        // 3. TEKNISI: Hanya melihat tiket yang ditugaskan ke namanya/NIK-nya
+        // 3. TEKNISI: Hanya melihat tiket yang ditugaskan
         elseif ($user->role === 'teknisi') {
-            // Filter berdasarkan nama atau NIK di kolom 'petugas'
-            // Asumsi kolom petugas berisi string "Nama (NIK)"
-            $query->where('petugas', 'like', '%' . $user->name . '%')
+            $query->where(function($q) use ($user) {
+                $q->where('petugas', 'like', '%' . $user->name . '%')
                   ->orWhere('petugas', 'like', '%' . $user->nik . '%');
+            });
         }
 
-        // --- SEARCH FILTER (Tetap Sama) ---
+        // SEARCH FILTER
         if ($request->search) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
@@ -78,7 +73,6 @@ class TicketController extends Controller
             });
         }
 
-        // Urutkan dari terbaru
         $tickets = $query->orderBy('created_at', 'desc')->paginate(10);
 
         return response()->json([
@@ -91,25 +85,16 @@ class TicketController extends Controller
     // --- FUNGSI STORE (SIMPAN DATA BARU) ---
     public function store(Request $request)
     {
-        // 1. Validasi Input
         $request->validate([
             'unit' => 'required',
             'deskripsi' => 'required',
             'sa' => 'required|string',
-            // Tambahkan validasi lain jika perlu
         ]);
 
-        // 2. GENERATE NOMOR INTERNAL (BAGIAN YANG HILANG TADI)
-        // Logika: Cari tiket terakhir, ambil ID-nya, tambah 1.
-        // Format Contoh: TKT-0001, TKT-0002
-        $lastTicket = Ticket::orderBy('id', 'desc')->first();
-        $nextId = $lastTicket ? $lastTicket->id + 1 : 1;
-        $nomor_internal = 'INV-' . sprintf('%04d', $nextId); 
-        // ----------------------------------------------------
+        $nomor_internal = $this->generateTicketNumber(); // Pakai helper yang sudah dibuat
 
-        // 3. Simpan ke Database
         $ticket = Ticket::create([
-            'nomor_internal' => $nomor_internal, // Variabel ini sekarang sudah ada isinya
+            'nomor_internal' => $nomor_internal,
             'nomor_sistem' => $request->nomor_sistem,
             'unit' => $request->unit,
             'jenis' => $request->jenis,
@@ -119,17 +104,16 @@ class TicketController extends Controller
             'deskripsi' => $request->deskripsi,
             'petugas' => $request->petugas, 
             'status' => 'Open',
+            // closed_at otomatis NULL saat create
         ]);
+
         dispatch(function() use ($ticket) {
              \App\Services\GoogleSheetService::send($ticket, 'create');
         })->afterResponse();
 
-        // 4. Kirim Notifikasi Telegram (Dengan Pengaman Try-Catch)
         try {
-            // Pastikan fungsi notifyTechnicians ada di paling bawah class Controller ini
             $this->notifyTechnicians($ticket);
         } catch (\Exception $e) {
-            // Jika Telegram error, catat di log saja, jangan bikin error 500 di browser
             Log::error("Gagal mengirim notifikasi Telegram: " . $e->getMessage());
         }
 
@@ -140,10 +124,9 @@ class TicketController extends Controller
         ], 201);
     }
 
-    // --- FUNGSI SHOW (DETAIL TIKET) - PENTING UNTUK HALAMAN EDIT ---
+    // --- FUNGSI SHOW (DETAIL TIKET) ---
     public function show($id)
     {
-        // Load tiket beserta relasi logs dan user pembuat log
         $ticket = Ticket::with(['logs.user'])->find($id);
 
         if (!$ticket) {
@@ -155,8 +138,9 @@ class TicketController extends Controller
             'data' => $ticket
         ]);
     }
-	
-	public function addLog(Request $request, $id)
+    
+    // --- FUNGSI ADD LOG (UPDATE PROGRESS TEKNISI) ---
+    public function addLog(Request $request, $id)
     {
         $ticket = Ticket::find($id);
         if (!$ticket) return response()->json(['message' => 'Not Found'], 404);
@@ -165,7 +149,6 @@ class TicketController extends Controller
             'status' => 'required',
             'deskripsi' => 'required',
             'image' => 'nullable|image|mimes:jpeg,png,jpg|max:5120',
-            // Validasi field baru (nullable/boleh kosong)
             'odp' => 'nullable|string',
             'odc' => 'nullable|string',
             'ftm' => 'nullable|string',
@@ -180,11 +163,10 @@ class TicketController extends Controller
             $imagePath = 'storage/evident/' . $filename; 
         }
 
-        // 2. Simpan Log (Riwayat)
+        // 2. Simpan Log
         $ticket->logs()->create([
             'user_id' => $request->user()->id,
             'status' => $request->status,
-            // Kita gabungkan info segmentasi ke deskripsi log agar terbaca di riwayat
             'deskripsi' => $request->deskripsi . 
                            ($request->odp ? " [ODP: $request->odp]" : "") .
                            ($request->odc ? " [ODC: $request->odc]" : ""),
@@ -194,7 +176,18 @@ class TicketController extends Controller
         // 3. Update Status & Segmentasi di Tabel Utama Tiket
         $updateData = ['status' => $request->status];
         
-        // Hanya update jika user mengisi data (agar data lama tidak tertimpa kosong)
+        // --- LOGIKA CLOSED_AT (UPDATE 1) ---
+        if ($request->status === 'Closed') {
+            // Jika status berubah jadi Closed, isi waktunya
+            if ($ticket->status !== 'Closed') {
+                $updateData['closed_at'] = now();
+            }
+        } else {
+            // Jika status BUKAN Closed (misal re-open), kosongkan lagi
+            $updateData['closed_at'] = null;
+        }
+        // -----------------------------------
+
         if ($request->filled('odp')) $updateData['odp'] = $request->odp;
         if ($request->filled('odc')) $updateData['odc'] = $request->odc;
         if ($request->filled('ftm')) $updateData['ftm'] = $request->ftm;
@@ -206,13 +199,13 @@ class TicketController extends Controller
         try {
             \App\Services\GoogleSheetService::send($ticket, 'update');
         } catch (\Exception $e) {
-             \Log::error("Gagal update Sheet: " . $e->getMessage());
+             Log::error("Gagal update Sheet: " . $e->getMessage());
         }
 
-        return response()->json(['status' => true, 'message' => 'Worklog & Segmentasi berhasil diupdate']);
+        return response()->json(['status' => true, 'message' => 'Worklog berhasil diupdate']);
     }
 
-    // --- FUNGSI UPDATE (EDIT DATA) - INI YANG SEBELUMNYA HILANG ---
+    // --- FUNGSI UPDATE (EDIT DATA ADMIN) ---
     public function update(Request $request, $id)
     {
         $ticket = Ticket::find($id);
@@ -221,30 +214,24 @@ class TicketController extends Controller
             return response()->json(['status' => false, 'message' => 'Tiket tidak ditemukan'], 404);
         }
 
-        // --- LOGIKA KEAMANAN BARU ---
-        // Cek Role user yang sedang login
         $userRole = $request->user()->role;
-        
-        // Cek Status tiket saat ini di database
         $currentStatus = $ticket->status;
 
-        // Jika user adalah TEKNISI dan status tiket sudah CLOSED
+        // Cek Izin Teknisi
         if ($userRole === 'teknisi' && $currentStatus === 'Closed') {
             return response()->json([
                 'status' => false,
-                'message' => 'Akses Ditolak: Tiket dengan status Closed tidak dapat diedit lagi oleh Teknisi.'
-            ], 403); // 403 Forbidden
+                'message' => 'Akses Ditolak: Tiket Closed tidak dapat diedit teknisi.'
+            ], 403);
         }
-        // -----------------------------
 
-        // Validasi input
         $request->validate([
             'unit' => 'sometimes|required',
             'deskripsi' => 'sometimes|required',
         ]);
 
-        // Lakukan Update
-        $updated = $ticket->update([
+        // Siapkan data update
+        $dataToUpdate = [
             'nomor_sistem' => $request->nomor_sistem,
             'unit'         => $request->unit,
             'jenis'        => $request->jenis,
@@ -254,7 +241,24 @@ class TicketController extends Controller
             'deskripsi'    => $request->deskripsi,
             'petugas'      => $request->petugas,
             'status'       => $request->status ?? $ticket->status,
-        ]);
+        ];
+
+        // --- LOGIKA CLOSED_AT (UPDATE 2) ---
+        // Jika Admin mengubah status lewat menu Edit
+        if ($request->has('status')) {
+            if ($request->status === 'Closed') {
+                 // Hanya set waktu jika sebelumnya belum closed
+                 if ($ticket->status !== 'Closed') {
+                     $dataToUpdate['closed_at'] = now();
+                 }
+            } else {
+                 // Reset jika dibuka kembali
+                 $dataToUpdate['closed_at'] = null;
+            }
+        }
+        // -----------------------------------
+
+        $updated = $ticket->update($dataToUpdate);
 
         \App\Services\GoogleSheetService::send($ticket, 'update');
 
@@ -268,43 +272,35 @@ class TicketController extends Controller
     // --- FUNGSI DESTROY (HAPUS TIKET) ---
     public function destroy(Request $request, $id)
     {
-        // 1. Cek Role User
         $userRole = $request->user()->role;
 
-        // Jika role bukan admin DAN bukan helpdesk (artinya teknisi)
         if ($userRole !== 'admin' && $userRole !== 'helpdesk') {
             return response()->json([
                 'status' => false,
                 'message' => 'Anda tidak memiliki izin untuk menghapus tiket.'
-            ], 403); // 403 Forbidden
+            ], 403);
         }
 
-        // 2. Lanjut Hapus
         $ticket = Ticket::find($id);
         if (!$ticket) return response()->json(['message' => 'Not Found'], 404);
         
         $ticket->delete();
         return response()->json(['status' => true, 'message' => 'Tiket dihapus']);
     }
-	
-	private function notifyTechnicians($ticket)
+    
+    // --- NOTIFIKASI TELEGRAM ---
+    private function notifyTechnicians($ticket)
     {
-        // 1. Ambil string petugas, misal: "Budi (1001), Andi (1002)"
         $petugasString = $ticket->petugas;
-        
-        // 2. Ekstrak NIK menggunakan Regex
-        // Mencari angka di dalam kurung (...)
         preg_match_all('/\((.*?)\)/', $petugasString, $matches);
-        $niks = $matches[1]; // Array berisi ['1001', '1002']
+        $niks = $matches[1]; 
 
         if (empty($niks)) return;
 
-        // 3. Cari User berdasarkan NIK yang punya telegram_chat_id
         $users = User::whereIn('nik', $niks)
                      ->whereNotNull('telegram_chat_id')
                      ->get();
 
-        // 4. Kirim Pesan ke masing-masing teknisi
         foreach ($users as $user) {
             $message = "🚨 <b>TIKET BARU DITUGASKAN!</b>\n\n" .
                        "🆔 <b>No:</b> {$ticket->nomor_internal}\n" .
@@ -317,61 +313,28 @@ class TicketController extends Controller
         }
     }
 
-    public function counts(Request $request)
-    {
-        $user = $request->user();
-        $query = Ticket::query();
-
-        // Terapkan logika filter yang SAMA PERSIS dengan index di atas
-        if (in_array($user->role, ['hsa', 'korlap'])) {
-             $query->where('sa', $user->sa_code);
-        } elseif ($user->role === 'teknisi') {
-             $query->where('petugas', 'like', '%' . $user->name . '%');
-        }
-
-        // Hitung
-        $data = [
-            'total' => (clone $query)->count(),
-            'open' => (clone $query)->where('status', 'Open')->count(),
-            'closed' => (clone $query)->where('status', 'Closed')->count(),
-            'pending' => (clone $query)->where('status', 'Pending')->count(),
-        ];
-
-        return response()->json(['status' => true, 'data' => $data]);
-    }
-
-    // ... method lainnya ...
-
+    // --- DASHBOARD STATS ---
     public function dashboardStats(Request $request)
     {
         $user = $request->user();
         $query = Ticket::query();
 
-        // --- FILTER ROLE (Sama seperti index) ---
         if (in_array($user->role, ['hsa', 'korlap'])) {
             if ($user->sa_code) {
                 $query->where('sa', $user->sa_code);
             } else {
-                $query->where('id', 0); // Safety jika user tidak punya SA
+                $query->where('id', 0);
             }
         } elseif ($user->role === 'teknisi') {
-            // Filter berdasarkan Nama/NIK petugas
             $query->where(function($q) use ($user) {
                 $q->where('petugas', 'like', '%' . $user->name . '%')
                   ->orWhere('petugas', 'like', '%' . $user->nik . '%');
             });
         }
 
-        // --- HITUNG STATISTIK ---
-        // Menggunakan clone agar query dasar tidak berubah
-        
         $total = (clone $query)->count();
-        
         $open = (clone $query)->where('status', 'Open')->count();
-        
-        // "In Progress" biasanya mencakup: On The Way, On Site, dan In Progress
         $progress = (clone $query)->whereIn('status', ['On The Way', 'On Site', 'In Progress'])->count();
-        
         $closed = (clone $query)->where('status', 'Closed')->count();
 
         return response()->json([

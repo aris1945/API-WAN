@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up()
+{
+    Schema::table('tickets', function (Blueprint $table) {
+        // Menambahkan kolom closed_at yang BISA KOSONG (nullable)
+        // Ditaruh setelah kolom status agar rapi
+        $table->timestamp('closed_at')->nullable()->after('status');
+    });
+}
+
+public function down()
+{
+    Schema::table('tickets', function (Blueprint $table) {
+        $table->dropColumn('closed_at');
+    });
+}
+};

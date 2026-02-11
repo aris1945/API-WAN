@@ -10,23 +10,25 @@ class Ticket extends Model
     use HasFactory;
 
     protected $fillable = [
-    'nomor_internal', // Baru
-    'nomor_sistem',   // Baru
-	'site_id',
-    'sa',
-    'unit', 
-	'jenis', 
-	'site_name', 
-	'deskripsi', 
-	'petugas', 
-	'status',
-    'odp',
-    'odc',
-    'ftm',
-];
-	public function logs()
-{
-    // Urutkan dari yang terbaru (agar di UI muncul paling atas)
-    return $this->hasMany(TicketLog::class)->orderBy('created_at', 'desc');
-}
+        'nomor_internal', // Baru
+        'nomor_sistem',   // Baru
+        'closed_at',
+        'site_id',
+        'sa',
+        'unit',
+        'jenis',
+        'site_name',
+        'deskripsi',
+        'petugas',
+        'status',
+        'odp',
+        'odc',
+        'ftm',
+    ];
+    protected $dates = ['closed_at'];
+    public function logs()
+    {
+        // Urutkan dari yang terbaru (agar di UI muncul paling atas)
+        return $this->hasMany(TicketLog::class)->orderBy('created_at', 'desc');
+    }
 }
