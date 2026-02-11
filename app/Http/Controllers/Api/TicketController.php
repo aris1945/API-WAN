@@ -39,28 +39,52 @@ class TicketController extends Controller
     // --- FUNGSI INDEX (LIST TIKET) ---
     public function index(Request $request)
     {
-        $user = $request->user(); 
-        $query = Ticket::latest();
+        $user = $request->user();
+        $query = Ticket::query();
 
-        // LOGIKA FILTER BERDASARKAN ROLE
-        if ($user->role === 'teknisi') {
-            // Filter: Tampilkan tiket jika kolom 'petugas' mengandung NIK si user
-            $query->where('petugas', 'like', '%' . $user->nik . '%');
+        // --- LOGIKA FILTER BERDASARKAN ROLE ---
+
+        // 1. ADMIN / HELPDESK: Melihat SEMUA tiket (Tanpa Filter)
+        if (in_array($user->role, ['admin', 'helpdesk'])) {
+            // Tidak ada filter, liat semua
+        } 
+        
+        // 2. HSA / KORLAP: Hanya melihat tiket di SA mereka
+        elseif (in_array($user->role, ['hsa', 'korlap'])) {
+            // Pastikan user punya sa_code, kalau tidak punya, jangan tampilkan apa-apa (safety)
+            if ($user->sa_code) {
+                $query->where('sa', $user->sa_code);
+            } else {
+                // Opsional: return kosong jika HSA tidak punya area
+                $query->where('id', 0); 
+            }
         }
 
-        // Filter Pencarian Tiket
-        if ($request->has('search')) {
+        // 3. TEKNISI: Hanya melihat tiket yang ditugaskan ke namanya/NIK-nya
+        elseif ($user->role === 'teknisi') {
+            // Filter berdasarkan nama atau NIK di kolom 'petugas'
+            // Asumsi kolom petugas berisi string "Nama (NIK)"
+            $query->where('petugas', 'like', '%' . $user->name . '%')
+                  ->orWhere('petugas', 'like', '%' . $user->nik . '%');
+        }
+
+        // --- SEARCH FILTER (Tetap Sama) ---
+        if ($request->search) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
-                $q->where('nomor_internal', 'like', "%{$search}%")
-                  ->orWhere('site_name', 'like', "%{$search}%")
-                  ->orWhere('deskripsi', 'like', "%{$search}%");
+                $q->where('nomor_internal', 'like', "%$search%")
+                  ->orWhere('site_name', 'like', "%$search%")
+                  ->orWhere('deskripsi', 'like', "%$search%");
             });
         }
 
+        // Urutkan dari terbaru
+        $tickets = $query->orderBy('created_at', 'desc')->paginate(10);
+
         return response()->json([
             'status' => true,
-            'data' => $query->paginate(10)
+            'message' => 'List Tickets',
+            'data' => $tickets
         ]);
     }
 
@@ -71,6 +95,7 @@ class TicketController extends Controller
         $request->validate([
             'unit' => 'required',
             'deskripsi' => 'required',
+            'sa' => 'required|string',
             // Tambahkan validasi lain jika perlu
         ]);
 
@@ -88,6 +113,7 @@ class TicketController extends Controller
             'nomor_sistem' => $request->nomor_sistem,
             'unit' => $request->unit,
             'jenis' => $request->jenis,
+            'sa' => $request->sa,
             'site_name' => $request->site_name,
             'site_id' => $request->site_id,
             'deskripsi' => $request->deskripsi,
@@ -223,6 +249,7 @@ class TicketController extends Controller
             'unit'         => $request->unit,
             'jenis'        => $request->jenis,
             'site_name'    => $request->site_name,
+            'sa'           => $request->sa,
             'site_id'      => $request->site_id,
             'deskripsi'    => $request->deskripsi,
             'petugas'      => $request->petugas,
@@ -288,5 +315,73 @@ class TicketController extends Controller
 
             TelegramService::sendMessage($user->telegram_chat_id, $message);
         }
+    }
+
+    public function counts(Request $request)
+    {
+        $user = $request->user();
+        $query = Ticket::query();
+
+        // Terapkan logika filter yang SAMA PERSIS dengan index di atas
+        if (in_array($user->role, ['hsa', 'korlap'])) {
+             $query->where('sa', $user->sa_code);
+        } elseif ($user->role === 'teknisi') {
+             $query->where('petugas', 'like', '%' . $user->name . '%');
+        }
+
+        // Hitung
+        $data = [
+            'total' => (clone $query)->count(),
+            'open' => (clone $query)->where('status', 'Open')->count(),
+            'closed' => (clone $query)->where('status', 'Closed')->count(),
+            'pending' => (clone $query)->where('status', 'Pending')->count(),
+        ];
+
+        return response()->json(['status' => true, 'data' => $data]);
+    }
+
+    // ... method lainnya ...
+
+    public function dashboardStats(Request $request)
+    {
+        $user = $request->user();
+        $query = Ticket::query();
+
+        // --- FILTER ROLE (Sama seperti index) ---
+        if (in_array($user->role, ['hsa', 'korlap'])) {
+            if ($user->sa_code) {
+                $query->where('sa', $user->sa_code);
+            } else {
+                $query->where('id', 0); // Safety jika user tidak punya SA
+            }
+        } elseif ($user->role === 'teknisi') {
+            // Filter berdasarkan Nama/NIK petugas
+            $query->where(function($q) use ($user) {
+                $q->where('petugas', 'like', '%' . $user->name . '%')
+                  ->orWhere('petugas', 'like', '%' . $user->nik . '%');
+            });
+        }
+
+        // --- HITUNG STATISTIK ---
+        // Menggunakan clone agar query dasar tidak berubah
+        
+        $total = (clone $query)->count();
+        
+        $open = (clone $query)->where('status', 'Open')->count();
+        
+        // "In Progress" biasanya mencakup: On The Way, On Site, dan In Progress
+        $progress = (clone $query)->whereIn('status', ['On The Way', 'On Site', 'In Progress'])->count();
+        
+        $closed = (clone $query)->where('status', 'Closed')->count();
+
+        return response()->json([
+            'status' => true,
+            'data' => [
+                'total' => $total,
+                'open' => $open,
+                'in_progress' => $progress,
+                'closed' => $closed
+            ]
+        ]);
     }
 }

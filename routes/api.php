@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\SpbuController;
 use App\Http\Controllers\Api\AbsensiController;
 use App\Http\Controllers\Api\TicketController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\SaController;
+
 
 // === ROUTE PUBLIC (Bisa diakses siapa saja) ===
 Route::post('/register', [AuthController::class, 'register']); // Buat user baru
@@ -25,6 +27,7 @@ Route::middleware('auth:sanctum')->group(function () {
 	
 	Route::get('/tickets/next-number', [TicketController::class, 'getNextNumber']);
 	Route::apiResource('/tickets', TicketController::class);
+    
     
     // Fitur Logout
     Route::post('/logout', function (Request $request) {
@@ -55,6 +58,12 @@ Route::post('/tickets', [TicketController::class, 'store']);
     Route::get('/tickets', [TicketController::class, 'index']);
 	
     Route::put('/tickets/{id}', [TicketController::class, 'update']);
+
+    Route::get('/sa', [SaController::class, 'index']);
+
+    Route::get('/dashboard/stats', [App\Http\Controllers\Api\TicketController::class, 'dashboardStats']);
+    
+
     
 });
 

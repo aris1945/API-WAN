@@ -24,6 +24,7 @@ class User extends Authenticatable
     'role',     // <--- Baru
     'email',
     'password',
+    'sa_code'
 ];
 
     /**

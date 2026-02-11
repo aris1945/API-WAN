@@ -13,6 +13,7 @@ class Ticket extends Model
     'nomor_internal', // Baru
     'nomor_sistem',   // Baru
 	'site_id',
+    'sa',
     'unit', 
 	'jenis', 
 	'site_name', 

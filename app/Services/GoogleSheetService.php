@@ -24,6 +24,7 @@ class GoogleSheetService
                     'unit' => $ticket->unit,
                     'site_id' => $ticket->site_id,
                     'site_name' => $ticket->site_name,
+                    'sa' => $ticket->sa,
                     'deskripsi' => $ticket->deskripsi,
                     'status' => $ticket->status,
                     'petugas' => $ticket->petugas,
