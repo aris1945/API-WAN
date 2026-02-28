@@ -27,7 +27,7 @@ class SiteController extends Controller
 
         // --- PERBAIKAN DI SINI ---
         // Ambil nilai 'per_page' dari URL, jika tidak ada default ke 10
-        $perPage = $request->input('per_page', 10);
+        $perPage = $request->input('per_page', 1000);
 
         // Validasi agar server tidak crash jika user minta terlalu banyak (Opsional)
         // misal: maksimal 5000 agar memori aman
