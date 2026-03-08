@@ -8,6 +8,9 @@ use Illuminate\Http\Request;
 use App\Services\TelegramService;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use Kreait\Firebase\Factory;
+use Kreait\Firebase\Messaging\CloudMessage;
+use Kreait\Firebase\Messaging\Notification;
 
 class TicketController extends Controller
 {
@@ -106,6 +109,35 @@ class TicketController extends Controller
             'status' => 'Open',
             // closed_at otomatis NULL saat create
         ]);
+
+        $teknisi = User::where('nik', $request->petugas)->first();
+        // 2. KALAU TEKNISINYA KETEMU DAN PUNYA TOKEN HP, HAJAR TEMBAK!
+        if ($teknisi && $teknisi->fcm_token) {
+            try {
+                // Siapin meriamnya pakai kunci rahasia yang di .env
+                $factory = (new Factory)->withServiceAccount(base_path(env('FIREBASE_CREDENTIALS')));
+                $messaging = $factory->createMessaging();
+
+                // Bikin peluru notifikasinya
+                $message = CloudMessage::withTarget('token', $teknisi->fcm_token)
+                    ->withNotification(Notification::create(
+                        '🚨 Tiket Baru Bos!', // Judul Notif
+                        "Woy bangun! Ada kerjaan masuk: {$request->nomor_internal}. Buruan sikat jing!" // Isi Notif
+                    ))
+                    ->withData([
+                        // Ini data rahasia di balik layar kalau lu mau pas notif diklik langsung buka detail tiket
+                        'ticket_id' => $ticket->id, 
+                        'type' => 'new_ticket'
+                    ]);
+
+                // TEMBAAAAK!
+                $messaging->send($message);
+                
+            } catch (\Exception $e) {
+                // Kalau error ngirim notif, biarin aja jangan sampai bikin API create tiketnya gagal total
+                \Log::error('Meriam FCM macet: ' . $e->getMessage());
+            }
+        }
 
         dispatch(function() use ($ticket) {
              \App\Services\GoogleSheetService::send($ticket, 'create');
