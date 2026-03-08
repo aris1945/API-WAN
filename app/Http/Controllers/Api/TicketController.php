@@ -94,7 +94,7 @@ class TicketController extends Controller
             'sa' => 'required|string',
         ]);
 
-        $nomor_internal = $this->generateTicketNumber(); // Pakai helper yang sudah dibuat
+        $nomor_internal = $this->generateTicketNumber();
 
         $ticket = Ticket::create([
             'nomor_internal' => $nomor_internal,
@@ -107,36 +107,44 @@ class TicketController extends Controller
             'deskripsi' => $request->deskripsi,
             'petugas' => $request->petugas, 
             'status' => 'Open',
-            // closed_at otomatis NULL saat create
         ]);
 
-        $teknisi = User::where('nik', $request->petugas)->first();
-        // 2. KALAU TEKNISINYA KETEMU DAN PUNYA TOKEN HP, HAJAR TEMBAK!
-        if ($teknisi && $teknisi->fcm_token) {
-            try {
-                // Siapin meriamnya pakai kunci rahasia yang di .env
-                $factory = (new Factory)->withServiceAccount(base_path(env('FIREBASE_CREDENTIALS')));
-                $messaging = $factory->createMessaging();
+        // JURUS SEDOT NIK DARI STRING PETUGAS (Contoh string: "Jolian (12345) | Warsito (67890)")
+        $petugasString = $request->petugas;
+        preg_match_all('/\((.*?)\)/', $petugasString, $matches);
+        $niks = $matches[1]; // Dapet array isinya ['12345', '67890']
 
-                // Bikin peluru notifikasinya
-                $message = CloudMessage::withTarget('token', $teknisi->fcm_token)
-                    ->withNotification(Notification::create(
-                        '🚨 Tiket Baru Bos!', // Judul Notif
-                        "Woy bangun! Ada kerjaan masuk: {$request->nomor_internal}. Buruan sikat jing!" // Isi Notif
-                    ))
-                    ->withData([
-                        // Ini data rahasia di balik layar kalau lu mau pas notif diklik langsung buka detail tiket
-                        'ticket_id' => $ticket->id, 
-                        'type' => 'new_ticket'
-                    ]);
+        if (!empty($niks)) {
+            // Cari SEMUA teknisi yang NIK-nya ada di array
+            $teknisis = User::whereIn('nik', $niks)->get();
 
-                // TEMBAAAAK!
-                $messaging->send($message);
-                
-            } catch (\Exception $e) {
-                // Kalau error ngirim notif, biarin aja jangan sampai bikin API create tiketnya gagal total
-                \Log::error('Meriam FCM macet: ' . $e->getMessage());
+            foreach ($teknisis as $teknisi) {
+                if ($teknisi->fcm_token) {
+                    Log::info('FCM JALAN: Nembak ke ' . $teknisi->name);
+                    try {
+                        $factory = (new Factory)->withServiceAccount(base_path(env('FIREBASE_CREDENTIALS')));
+                        $messaging = $factory->createMessaging();
+
+                        $message = CloudMessage::withTarget('token', $teknisi->fcm_token)
+                            ->withNotification(Notification::create(
+                                '🚨 Tiket Baru Bos!', 
+                                "Woy bangun! Ada kerjaan masuk: {$ticket->nomor_internal}. Buruan sikat jing!" 
+                            ))
+                            ->withData([
+                                'ticket_id' => $ticket->id, 
+                                'type' => 'new_ticket'
+                            ]);
+
+                        $messaging->send($message);
+                    } catch (\Exception $e) {
+                        Log::error('Meriam FCM macet ke ' . $teknisi->name . ': ' . $e->getMessage());
+                    }
+                } else {
+                    Log::error('FCM GAGAL: Teknisi ' . $teknisi->name . ' kagak punya token jing!');
+                }
             }
+        } else {
+            Log::error('FCM GAGAL: Kodingan gagal ngekstrak NIK dari string: ' . $petugasString);
         }
 
         dispatch(function() use ($ticket) {
@@ -186,7 +194,6 @@ class TicketController extends Controller
             'ftm' => 'nullable|string',
         ]);
 
-        // 1. Upload Gambar
         $imagePath = null;
         if ($request->hasFile('image')) {
             $image = $request->file('image');
@@ -195,7 +202,6 @@ class TicketController extends Controller
             $imagePath = 'storage/evident/' . $filename; 
         }
 
-        // 2. Simpan Log
         $ticket->logs()->create([
             'user_id' => $request->user()->id,
             'status' => $request->status,
@@ -205,20 +211,15 @@ class TicketController extends Controller
             'image_path' => $imagePath
         ]);
 
-        // 3. Update Status & Segmentasi di Tabel Utama Tiket
         $updateData = ['status' => $request->status];
         
-        // --- LOGIKA CLOSED_AT (UPDATE 1) ---
         if ($request->status === 'Closed') {
-            // Jika status berubah jadi Closed, isi waktunya
             if ($ticket->status !== 'Closed') {
                 $updateData['closed_at'] = now();
             }
         } else {
-            // Jika status BUKAN Closed (misal re-open), kosongkan lagi
             $updateData['closed_at'] = null;
         }
-        // -----------------------------------
 
         if ($request->filled('odp')) $updateData['odp'] = $request->odp;
         if ($request->filled('odc')) $updateData['odc'] = $request->odc;
@@ -226,7 +227,6 @@ class TicketController extends Controller
 
         $ticket->update($updateData);
 
-        // 4. Kirim ke Google Sheet
         $ticket->refresh(); 
         try {
             \App\Services\GoogleSheetService::send($ticket, 'update');
@@ -249,7 +249,6 @@ class TicketController extends Controller
         $userRole = $request->user()->role;
         $currentStatus = $ticket->status;
 
-        // Cek Izin Teknisi
         if ($userRole === 'teknisi' && $currentStatus === 'Closed') {
             return response()->json([
                 'status' => false,
@@ -262,7 +261,6 @@ class TicketController extends Controller
             'deskripsi' => 'sometimes|required',
         ]);
 
-        // Siapkan data update
         $dataToUpdate = [
             'nomor_sistem' => $request->nomor_sistem,
             'unit'         => $request->unit,
@@ -272,23 +270,21 @@ class TicketController extends Controller
             'site_id'      => $request->site_id,
             'deskripsi'    => $request->deskripsi,
             'petugas'      => $request->petugas,
-            'status'       => $request->status ?? $ticket->status,
+            // Hapus baris status yang ngawur di sini biar dia nggak ngaco pas diupdate
         ];
 
-        // --- LOGIKA CLOSED_AT (UPDATE 2) ---
-        // Jika Admin mengubah status lewat menu Edit
-        if ($request->has('status')) {
+        // LOGIKA STATUS UDAH DIBENERIN BIAR NGGAK DATA TRUNCATED
+        if ($request->has('status') && $request->status != null) {
+            $dataToUpdate['status'] = $request->status;
+            
             if ($request->status === 'Closed') {
-                 // Hanya set waktu jika sebelumnya belum closed
                  if ($ticket->status !== 'Closed') {
                      $dataToUpdate['closed_at'] = now();
                  }
             } else {
-                 // Reset jika dibuka kembali
                  $dataToUpdate['closed_at'] = null;
             }
         }
-        // -----------------------------------
 
         $updated = $ticket->update($dataToUpdate);
 
