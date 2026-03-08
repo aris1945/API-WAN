@@ -125,16 +125,20 @@ class TicketController extends Controller
                         $factory = (new Factory)->withServiceAccount(base_path(env('FIREBASE_CREDENTIALS')));
                         $messaging = $factory->createMessaging();
 
-                        $message = CloudMessage::withTarget('token', $teknisi->fcm_token)
-                            ->withNotification(Notification::create(
-                                '🚨 Tiket Baru Bos!', 
-                                "Woy bangun! Ada kerjaan masuk: {$ticket->nomor_internal}. Buruan sikat jing!" 
-                            ))
-                            ->withData([
-                                'ticket_id' => $ticket->id, 
-                                'type' => 'new_ticket'
-                            ]);
+                        $message = CloudMessage::fromArray([
+                            'token' => $teknisi->fcm_token,
+                            'notification' => [
+                                'title' => '🚨 Tiket Baru Bos!',
+                                'body'  => "Woy bangun! Ada kerjaan masuk: {$ticket->nomor_internal}. Buruan sikat jing!"
+                            ],
+                            'data' => [
+                                // Data payload FCM wajib string ya Bos!
+                                'ticket_id' => (string) $ticket->id, 
+                                'type'      => 'new_ticket'
+                            ]
+                        ]);
 
+                        // TEMBAAAAK!
                         $messaging->send($message);
                     } catch (\Exception $e) {
                         Log::error('Meriam FCM macet ke ' . $teknisi->name . ': ' . $e->getMessage());
