@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\AbsensiController;
 use App\Http\Controllers\Api\TicketController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\SaController;
+use App\Http\Controllers\Api\AttendanceController;
 
 
 // === ROUTE PUBLIC (Bisa diakses siapa saja) ===
@@ -22,6 +23,10 @@ Route::post('/sites/import', [SiteController::class, 'import']);
 
 // === ROUTE PRIVATE (Wajib Login / Punya Token) ===
 Route::middleware('auth:sanctum')->group(function () {
+
+    Route::post('/absen-masuk', [AttendanceController::class, 'absenMasuk']);
+    Route::post('/absen-pulang', [AttendanceController::class, 'absenPulang']);
+    Route::get('/absen-status', [AttendanceController::class, 'cekStatus']);
 	
 	Route::post('/tickets/{id}/log', [TicketController::class, 'addLog']); // Endpoint khusus log
 	
@@ -45,7 +50,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/absensi', [AbsensiController::class, 'getReport']);
     // Route SPBU
     Route::get('/spbu', [SpbuController::class, 'index']);
-	Route::get('/users/teknisi', [UserController::class, 'getTeknisi']);
+	Route::get('/users/teknisi', [UserController::class, 'getTeknisiActive']);
     
 
     // --- DATA SITES DIKUNCI DI SINI ---

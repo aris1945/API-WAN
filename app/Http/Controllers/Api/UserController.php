@@ -9,20 +9,20 @@ use Illuminate\Http\Request;
 class UserController extends Controller
 {
     // Mengambil daftar teknisi untuk dropdown
-    public function getTeknisi(Request $request)
+    public function getTeknisiActive() 
     {
-        $query = User::where('role', 'teknisi');
-
-        // Jika ada pencarian dari server side (opsional, tapi kita handle di frontend saja biar cepat)
-        if ($request->has('search')) {
-            $query->where('name', 'like', '%' . $request->search . '%');
-        }
-
-        $teknisi = $query->orderBy('name', 'asc')->get(['id', 'name', 'nik']);
-
-        return response()->json([
-            'status' => true,
-            'data' => $teknisi
-        ]);
+        $hariIni = date('Y-m-d');
+        
+        // Pakai metode JOIN yang lebih kejam dan barbar
+        $teknisi = \App\Models\User::select('users.*')
+            ->join('attendances', 'users.nik', '=', 'attendances.nik')
+            ->where('attendances.tanggal', $hariIni)
+            ->whereNotNull('attendances.jam_masuk')
+            ->whereNull('attendances.jam_pulang')
+            ->where('users.role', 'teknisi') // <--- GUE MATIIN DULU SEMENTARA BIAR NGGAK ERROR ROLE
+            ->groupBy('users.nik') // Jaga-jaga biar namanya gak dobel kalau dia absen 2 kali
+            ->get();
+            
+        return response()->json(['data' => $teknisi], 200);
     }
 }

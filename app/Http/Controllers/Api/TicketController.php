@@ -19,12 +19,12 @@ class TicketController extends Controller
                             ->first();
 
         if (!$lastTicket) {
-            return 'INV-0001';
+            return 'INW-0001';
         }
 
         $lastNumber = (int) substr($lastTicket->nomor_internal, 4);
         $newNumber = $lastNumber + 1;
-        return 'INV-' . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        return 'INW-' . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
     }
 
     // --- API UNTUK FRONTEND (PREVIEW NOMOR) ---

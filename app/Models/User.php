@@ -49,4 +49,12 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+
+    // Tambahin ini di dalem class User
+public function attendances()
+{
+    // Parameter 2: Foreign key di tabel attendances (nik)
+    // Parameter 3: Local key di tabel users (nik)
+    return $this->hasMany(Attendance::class, 'nik', 'nik');
+}
 }
