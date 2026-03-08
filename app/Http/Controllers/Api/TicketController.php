@@ -15,9 +15,11 @@ use Kreait\Firebase\Messaging\Notification;
 class TicketController extends Controller
 {
     // --- FUNGSI HELPER PRIVATE (LOGIKA GENERATOR) ---
+    // --- FUNGSI HELPER PRIVATE (LOGIKA GENERATOR) ---
     private function generateTicketNumber()
     {
-        $lastTicket = Ticket::where('nomor_internal', 'like', 'INV-%')
+        // TYPO KEMAREN DI SINI BOS, UDAH GUE GANTI JADI INW
+        $lastTicket = Ticket::where('nomor_internal', 'like', 'INW-%')
                             ->orderBy('id', 'desc')
                             ->first();
 
