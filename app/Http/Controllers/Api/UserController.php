@@ -25,4 +25,16 @@ class UserController extends Controller
             
         return response()->json(['data' => $teknisi], 200);
     }
+
+    // Fungsi buat nyimpen token KTP HP ke database
+    public function updateFcmToken(Request $request)
+    {
+        $user = auth()->user(); // Ambil user yang lagi login
+        
+        // Update kolom fcm_token di tabel users
+        $user->fcm_token = $request->fcm_token;
+        $user->save();
+
+        return response()->json(['message' => 'Token KTP HP sukses disimpen Bos!']);
+    }
 }

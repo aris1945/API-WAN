@@ -24,6 +24,8 @@ Route::post('/sites/import', [SiteController::class, 'import']);
 // === ROUTE PRIVATE (Wajib Login / Punya Token) ===
 Route::middleware('auth:sanctum')->group(function () {
 
+    Route::post('/update-fcm', [UserController::class, 'updateFcmToken']);
+
     Route::post('/absen-masuk', [AttendanceController::class, 'absenMasuk']);
     Route::post('/absen-pulang', [AttendanceController::class, 'absenPulang']);
     Route::get('/absen-status', [AttendanceController::class, 'cekStatus']);
