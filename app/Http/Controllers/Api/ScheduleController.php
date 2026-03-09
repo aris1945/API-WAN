@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 
 class ScheduleController extends Controller
 {
+    
     public function getSchedule(Request $request)
     {
         // 1. Tangkap parameter dari Flutter
@@ -15,10 +16,10 @@ class ScheduleController extends Controller
         $shiftToSearch = strtolower(trim($request->query('shift', '')));
 
         if (!in_array($lok, ['ijk', 'mgo'])) {
-            return response()->json(['status' => false, 'data' => 'Peringatan: Lokasi tidak valid. Gunakan "ijk" atau "mgo".']);
+            return response()->json(['status' => false, 'data' => null, 'message' => 'Lokasi tidak valid.']);
         }
         if (empty($dateToSearch)) {
-            return response()->json(['status' => false, 'data' => 'Peringatan: Tanggal pencarian tidak boleh kosong.']);
+            return response()->json(['status' => false, 'data' => null, 'message' => 'Tanggal tidak boleh kosong.']);
         }
 
         // 2. Terjemahkan Shift
@@ -32,33 +33,29 @@ class ScheduleController extends Controller
             case 'cuti': $translatedShiftToSearch = 'C'; break;
         }
 
-        // 3. Setup Akses ke Google Sheets Pakai Kunci Firebase
+        // 3. Setup Akses ke Google Sheets
         try {
             $client = new \Google_Client();
-            $client->setAuthConfig(base_path(env('FIREBASE_CREDENTIALS'))); // Daur ulang kunci FCM!
+            $client->setAuthConfig(base_path(env('FIREBASE_CREDENTIALS')));
             $client->addScope(\Google\Service\Sheets::SPREADSHEETS_READONLY);
             $service = new \Google\Service\Sheets($client);
 
             $spreadsheetId = '1UQL2lR41VKkamz0vhp5ygMPdkvMCIell35MP1__0_xI';
-            $sheetName = strtoupper($lok); // Range sheet IJK / MGO
-            
+            $sheetName = strtoupper($lok);
             $response = $service->spreadsheets_values->get($spreadsheetId, $sheetName);
             $values = $response->getValues();
         } catch (\Exception $e) {
-            return response()->json(['status' => false, 'data' => 'Error: Gagal mengakses spreadsheet. ' . $e->getMessage()]);
+            return response()->json(['status' => false, 'data' => null, 'message' => 'Gagal akses spreadsheet: ' . $e->getMessage()]);
         }
 
         if (empty($values)) {
-            return response()->json(['status' => false, 'data' => 'Error: Sheet kosong atau tidak ditemukan.']);
+            return response()->json(['status' => false, 'data' => null, 'message' => 'Sheet kosong.']);
         }
 
-        // 4. Cari Kolom Target (Berdasarkan Tanggal & Bulan)
+        // 4. Cari Kolom Target
         $dateParts = explode(' ', $dateToSearch);
-        if (count($dateParts) < 2) {
-            return response()->json(['status' => false, 'data' => 'Peringatan: Format tanggal tidak valid.']);
-        }
         $searchDay = $dateParts[0];
-        $searchMonth = $dateParts[1];
+        $searchMonth = $dateParts[1] ?? '';
 
         $targetCol = -1;
         $lastMonth = '';
@@ -67,10 +64,7 @@ class ScheduleController extends Controller
             $monthInCell = $values[2][$col] ?? '';
             $dayOfMonthInCell = $values[3][$col] ?? '';
 
-            if (trim($monthInCell) !== '') {
-                $lastMonth = strtolower(trim($monthInCell));
-            }
-
+            if (trim($monthInCell) !== '') $lastMonth = strtolower(trim($monthInCell));
             if (trim($dayOfMonthInCell) === $searchDay && $lastMonth === $searchMonth) {
                 $targetCol = $col;
                 break;
@@ -78,20 +72,21 @@ class ScheduleController extends Controller
         }
 
         if ($targetCol === -1) {
-            return response()->json(['status' => false, 'data' => "Tanggal \"{$dateToSearch}\" tidak ditemukan dalam jadwal."]);
+            return response()->json(['status' => false, 'data' => null, 'message' => "Tanggal {$dateToSearch} tidak ditemukan."]);
         }
 
-        // 5. Ambil Data Jadwal
-        $staffWorking = ['Pagi' => [], 'Siang' => [], 'Malam' => [], 'Bantek' => [], 'Libur' => [], 'Cuti' => []];
-        $helpdeskWorking = ['Pagi' => [], 'Siang' => [], 'Malam' => [], 'Bantek' => [], 'Libur' => [], 'Cuti' => []];
+        // 5. Ambil Data Jadwal (Pisahin per Shift)
+        $shiftOrder = ['Pagi', 'Siang', 'Malam', 'Bantek', 'Libur', 'Cuti'];
+        $staffWorking = array_fill_keys($shiftOrder, []);
+        $helpdeskWorking = array_fill_keys($shiftOrder, []);
 
         for ($i = 4; $i < count($values); $i++) {
-            if ($i === 26) continue; // Lewati baris 27 (indeks 26) pemisah helpdesk
+            if ($i === 26) continue; // Lewati baris 27 pemisah helpdesk
 
             $nik = $values[$i][2] ?? null;
             $name = $values[$i][1] ?? null;
             $scheduleEntry = $values[$i][$targetCol] ?? '';
-            $rawShift = strtoupper(trim($scheduleEntry));
+            $rawShift = strtoupper(trim((string)$scheduleEntry));
 
             $translatedScheduleEntry = '';
             switch ($rawShift) {
@@ -114,11 +109,7 @@ class ScheduleController extends Controller
 
             if ($nik && $name && $isWorking && $isMatchingShift) {
                 $staffData = ['nik' => $nik, 'name' => $name, 'schedule' => $translatedScheduleEntry];
-                
-                // Fallback kalau shift gak ada di kategori
-                if (!array_key_exists($translatedScheduleEntry, $staffWorking)) {
-                    $translatedScheduleEntry = 'Cuti'; 
-                }
+                if (!array_key_exists($translatedScheduleEntry, $staffWorking)) $translatedScheduleEntry = 'Cuti'; 
 
                 if ($i < 26) {
                     $staffWorking[$translatedScheduleEntry][] = $staffData;
@@ -128,51 +119,31 @@ class ScheduleController extends Controller
             }
         }
 
-        // 6. Rangkai Pesan Akhir
-        $filterInfo = $shiftToSearch ? ' shift ' . ucfirst($shiftToSearch) : '';
-        $searchMonthCap = ucfirst($searchMonth);
-        $resultMessage = "Jadwal B2B " . strtoupper($lok) . " yang masuk pada {$searchDay} {$searchMonthCap}{$filterInfo}:\n\n";
+        // 6. Format Array Jadi JSON Bersih
+        $staffResult = [];
+        $helpdeskResult = [];
 
-        $staffSection = $this->buildCategoryMessage('Teknisi', $staffWorking);
-        $helpdeskSection = $this->buildCategoryMessage('Helpdesk', $helpdeskWorking);
-
-        if ($staffSection) $resultMessage .= $staffSection;
-        if ($helpdeskSection) $resultMessage .= $helpdeskSection;
-
-        if (!$staffSection && !$helpdeskSection) {
-            $resultMessage .= "Tidak ada staff atau helpdesk yang masuk pada tanggal ini{$filterInfo} atau semua sedang libur.";
-        }
-
-        return response()->json([
-            'status' => true,
-            'data' => $resultMessage
-        ]);
-    }
-
-    // Fungsi Bantuan untuk Format Pesan (Sama kayak JS lu)
-    private function buildCategoryMessage($categoryName, $staffListObject)
-    {
-        $categoryOutput = '';
-        $categoryHasEntries = false;
-        $totalCount = 0;
-        $shiftOrder = ['Pagi', 'Siang', 'Malam', 'Bantek', 'Libur', 'Cuti'];
-
-        foreach ($shiftOrder as $shiftName) {
-            $members = $staffListObject[$shiftName] ?? [];
-            if (count($members) > 0) {
-                $categoryOutput .= "--- {$shiftName} ---\n(" . count($members) . " orang) \n";
-                $totalCount += count($members);
-                foreach ($members as $member) {
-                    $categoryOutput .= "• Nama: {$member['name']} (NIK: {$member['nik']}).\n";
-                }
-                $categoryOutput .= "\n";
-                $categoryHasEntries = true;
+        foreach ($shiftOrder as $shift) {
+            if (count($staffWorking[$shift]) > 0) {
+                $staffResult[] = ['shift' => $shift, 'members' => $staffWorking[$shift]];
+            }
+            if (count($helpdeskWorking[$shift]) > 0) {
+                $helpdeskResult[] = ['shift' => $shift, 'members' => $helpdeskWorking[$shift]];
             }
         }
 
-        if ($categoryHasEntries) {
-            return "[ {$categoryName} ] ({$totalCount} orang)\n{$categoryOutput}";
-        }
-        return '';
+        $filterInfo = $shiftToSearch ? ' shift ' . ucfirst($shiftToSearch) : '';
+        $headerMessage = "Jadwal B2B " . strtoupper($lok) . " - {$searchDay} " . ucfirst($searchMonth) . $filterInfo;
+
+        // KITA LEMPAR DATA OBJEK SEKARANG BOS!
+        return response()->json([
+            'status' => true,
+            'data' => [
+                'header' => $headerMessage,
+                'teknisi' => $staffResult,
+                'helpdesk' => $helpdeskResult
+            ]
+        ]);
     }
+
 }
